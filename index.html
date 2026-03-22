@@ -2,54 +2,65 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>SHADOW PROTOCOL: ELITE SURVIVOR</title>
+    <title>SHADOW PROTOCOL: BOSS WAVES</title>
     <style>
         body { margin: 0; background: #000; overflow: hidden; font-family: 'Courier New', Courier, monospace; color: #0f0; }
         canvas { display: block; cursor: crosshair; }
         .overlay {
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             display: flex; flex-direction: column; justify-content: center;
-            align-items: center; background: rgba(0,0,0,0.92); z-index: 100;
-            text-align: center;
+            align-items: center; background: rgba(0,0,0,0.92); z-index: 100; text-align: center;
         }
         h1 { color: red; font-size: 5em; margin: 0; text-shadow: 0 0 20px #f00; }
-        .score-text { color: gold; font-size: 1.8em; margin: 10px 0; }
-        .high-score { color: #0ff; font-size: 1.2em; margin-bottom: 20px; }
-        
         button {
             padding: 15px 40px; font-size: 1.5em; background: #111; color: #0f0;
-            border: 2px solid #0f0; cursor: pointer; font-family: inherit; transition: 0.3s;
-            margin: 10px;
+            border: 2px solid #0f0; cursor: pointer; font-family: inherit; transition: 0.3s; margin: 10px;
         }
         button:hover { background: #0f0; color: #000; box-shadow: 0 0 20px #0f0; }
-        
         #ui { position: absolute; top: 20px; left: 20px; pointer-events: none; text-shadow: 2px 2px #000; z-index: 10; display: none; }
         #weapon-ui { position: absolute; bottom: 20px; right: 20px; text-align: right; pointer-events: none; display: none; }
         #round-ui { position: absolute; bottom: 20px; left: 20px; color: red; font-size: 4em; font-weight: bold; display: none; }
+        #prompt { position: absolute; top: 65%; left: 50%; transform: translateX(-50%); color: yellow; font-size: 1.4em; font-weight: bold; text-align: center; width: 80%; }
     </style>
 </head>
 <body>
 
     <div id="mainMenu" class="overlay">
         <h1>SHADOW PROTOCOL</h1>
-        <div class="high-score">PERSONAL RECORD: ROUND <span id="menuBest">0</span></div>
+        <p style="color: gold;">BOSS EVERY 2000 PTS | SPECIAL ROUND 5, 15, 25...</p>
         <button onclick="startGame()">START MISSION</button>
+    </div>
+
+    <div id="exfilMenu" class="overlay" style="display: none;">
+        <h1 style="color: #ff8800;">EXFIL READY</h1>
+        <p>GET TO THE ORANGE BOX. COLLECT 5 FUEL. KILL 25 IN BASE.</p>
+        <div id="breakTimer" style="font-size: 2em; color: white;">15</div>
+        <button onclick="startExfil()">INITIATE ESCAPE</button>
+        <button onclick="continueGame()">STAY AND FIGHT</button>
+    </div>
+
+    <div id="victoryMenu" class="overlay" style="display: none;">
+        <h1 style="color: #0f0;">MISSION SUCCESS</h1>
+        <p>YOU SURVIVED THE HORDE</p>
+        <button onclick="location.reload()">REPLAY</button>
     </div>
 
     <div id="gameOverMenu" class="overlay" style="display: none;">
         <h1>MISSION FAILED</h1>
-        <div class="score-text">ROUND REACHED: <span id="finalRound">0</span></div>
-        <div class="high-score" id="newRecordMsg" style="color: #f0f; display:none;">NEW PERSONAL BEST!</div>
-        <div class="high-score">BEST: ROUND <span id="gameBest">0</span></div>
-        <button onclick="restartGame()">REDEPLOY</button>
+        <button onclick="location.reload()">REDEPLOY</button>
     </div>
 
     <div id="ui">
-        <div>POINTS: <span id="points" style="color: gold;">500</span></div>
+        <div>POINTS: <span id="points" style="color: gold;">0</span></div>
         <div>HEALTH: <span id="hp" style="color: red;">❤❤❤</span></div>
+        <div>FUEL: <span id="fuel-count" style="color: #0ff;">0</span>/2</div>
+        <div id="exfil-status" style="display:none; color: #ff8800;">
+            EXFIL FUEL: <span id="ex-f">0</span>/5 | KILLS: <span id="ex-k">0</span>/25
+        </div>
     </div>
 
     <div id="round-ui">1</div>
+    <div id="prompt"></div>
 
     <div id="weapon-ui">
         <div id="w-name" style="font-size: 1.5em;">M1911</div>
@@ -64,153 +75,173 @@ const ctx = canvas.getContext('2d');
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
 
-// --- AUDIO ---
-const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-function playSound(freq, type, duration, vol=0.1) {
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    osc.type = type; osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-    osc.connect(gain); gain.connect(audioCtx.destination);
-    gain.gain.setValueAtTime(vol, audioCtx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
-    osc.start(); osc.stop(audioCtx.currentTime + duration);
-}
+const assets = { player: new Image(), zombie: new Image(), fuel: new Image(), ammo: new Image(), bench: new Image(), box: new Image(), miniboss: new Image(), megaboss: new Image() };
+assets.player.src = 'player.png'; assets.zombie.src = 'zombie.png'; assets.fuel.src = 'fuel.png'; assets.ammo.src = 'ammo.png'; assets.bench.src = 'workbench.png'; assets.box.src = 'generator.png';
+assets.miniboss.src = 'miniboss.png'; assets.megaboss.src = 'megaboss.png';
 
-// --- ASSETS ---
-const assets = { player: new Image(), zombie: new Image(), fuel: new Image(), ammo: new Image(), bench: new Image(), box: new Image() };
-assets.player.src = 'player.png';
-assets.zombie.src = 'zombie.png';
-assets.fuel.src = 'fuel.png';
-assets.ammo.src = 'ammo.png';
-assets.bench.src = 'workbench.png';
-assets.box.src = 'generator.png';
+const WEAPONS = { 'M1911': { mag: 7, dr: 200 }, 'GLOCK': { mag: 17, dr: 150 }, 'M4': { mag: 30, dr: 100 }, 'SHOTGUN': { mag: 6, dr: 600 } };
+const WORLD_SIZE = 3000;
+const SHIELD_SIZE = 400;
 
-let gameActive = false, paused = false, player, entities, round, bullets, keys;
-let highScore = localStorage.getItem('shadowProtocolBest') || 0;
-document.getElementById('menuBest').innerText = highScore;
+let gameActive = false, player, entities = [], round = 1, bullets = [], keys = {}, shieldPower = 0;
+let isExfil = false, exfilFuel = 0, exfilKills = 0, breakTime = 0, lastBossPoints = 0;
+
+let gates = [
+    { name: 'North', x: 0, y: -450, w: 220, h: 40, openTime: 0, weapon: 'M4', wx: 0, wy: -1000 },
+    { name: 'South', x: 0, y: 450, w: 220, h: 40, openTime: 0, weapon: 'GLOCK', wx: 0, wy: 1000 },
+    { name: 'East', x: 450, y: 0, w: 40, h: 220, openTime: 0, weapon: 'SHOTGUN', wx: 1000, wy: 0 }
+];
 
 function initStats() {
-    player = { x: 0, y: 0, hp: 3, points: 500, weapon: 'M1911', ammo: 7, speed: 4, angle: 0, isReloading: false, reloadProgress: 0, lastFire: 0 };
-    entities = [{ type: 'box', x: 250, y: -250 }, { type: 'bench', x: -250, y: -250 }];
-    round = 1; bullets = []; keys = {};
+    player = { x: 0, y: 0, hp: 3, points: 0, fuel: 0, weapon: 'M1911', ammo: 7, speed: 5, angle: 0, isReloading: false };
+    entities = [{ type: 'box', x: 0, y: -100 }, { type: 'bench', x: 100, y: 100 }];
+    gates.forEach(g => entities.push({ type: 'weapon_pickup', x: g.wx, y: g.wy, weapon: g.weapon }));
 }
 
 window.onkeydown = (e) => { keys[e.code] = true; if(e.code === 'KeyR') startReload(); };
 window.onkeyup = (e) => keys[e.code] = false;
 window.onmousemove = (e) => player.angle = Math.atan2(e.clientY - canvas.height/2, e.clientX - canvas.width/2);
-window.onmousedown = () => { if(gameActive) fire(); };
+window.onmousedown = () => { if(gameActive && breakTime <= 0) fire(); };
 
-function startGame() {
-    if (audioCtx.state === 'suspended') audioCtx.resume();
-    initStats();
-    document.getElementById('mainMenu').style.display = 'none';
-    document.getElementById('ui').style.display = 'block';
-    document.getElementById('weapon-ui').style.display = 'block';
-    document.getElementById('round-ui').style.display = 'block';
-    gameActive = true;
-    spawnWave();
-    requestAnimationFrame(update);
-}
-
-function restartGame() {
-    document.getElementById('gameOverMenu').style.display = 'none';
-    startGame();
-}
-
+function startGame() { initStats(); document.getElementById('mainMenu').style.display='none'; document.getElementById('ui').style.display='block'; document.getElementById('round-ui').style.display='block'; document.getElementById('weapon-ui').style.display='block'; gameActive = true; spawnWave(); requestAnimationFrame(update); }
+function startExfil() { isExfil = true; breakTime = 0; document.getElementById('exfilMenu').style.display = 'none'; document.getElementById('exfil-status').style.display = 'block'; entities.push({type:'exfil_box', x: 0, y: -250}); spawnWave(); }
+function continueGame() { breakTime = 0; document.getElementById('exfilMenu').style.display = 'none'; round++; spawnWave(); }
 function startReload() { if (player.isReloading) return; player.isReloading = true; player.reloadProgress = 0; }
 
 function fire() {
     if (player.isReloading || player.ammo <= 0) return;
-    let now = Date.now();
-    if (now - player.lastFire < 180) return;
-    player.lastFire = now;
-    playSound(150, 'sawtooth', 0.1, 0.05);
-    player.ammo--;
-    bullets.push({ x: player.x, y: player.y, vx: Math.cos(player.angle)*20, vy: Math.sin(player.angle)*20, life: 60 });
+    let now = Date.now(); if (now - player.lastFire < WEAPONS[player.weapon].dr) return;
+    player.lastFire = now; player.ammo--;
+    bullets.push({ x: player.x, y: player.y, vx: Math.cos(player.angle)*22, vy: Math.sin(player.angle)*22, life: 60 });
 }
 
 function spawnWave() {
-    for(let i=0; i<4+round*2; i++) {
+    let count = 6 + round * 2;
+    let isSpecial = round % 5 === 0;
+    
+    for(let i=0; i < (isSpecial ? count : count); i++) {
         let a = Math.random()*Math.PI*2;
-        entities.push({type:'zombie', x:player.x+Math.cos(a)*800, y:player.y+Math.sin(a)*800, hp:10+round*5});
+        let type = (isSpecial && Math.random() < 0.4) || (isExfil && Math.random() < 0.2) ? 'miniboss' : 'zombie';
+        entities.push({type: type, x: player.x+Math.cos(a)*1000, y: player.y+Math.sin(a)*1000, hp: type==='miniboss' ? 40 : 10+round*2});
     }
 }
 
 function update() {
     if (!gameActive) return;
-    
-    if (player.hp <= 0) {
-        gameActive = false;
-        playSound(100, 'sawtooth', 1, 0.2);
-        
-        // --- LEADERBOARD LOGIC ---
-        let isNewRecord = false;
-        if (round > highScore) {
-            highScore = round;
-            localStorage.setItem('shadowProtocolBest', highScore);
-            isNewRecord = true;
-        }
-        
-        document.getElementById('finalRound').innerText = round;
-        document.getElementById('gameBest').innerText = highScore;
-        document.getElementById('newRecordMsg').style.display = isNewRecord ? 'block' : 'none';
-        document.getElementById('gameOverMenu').style.display = 'flex';
-        return;
+    if (player.hp <= 0) { document.getElementById('gameOverMenu').style.display = 'flex'; return; }
+
+    if (breakTime > 0) { 
+        breakTime--; document.getElementById('breakTimer').innerText = Math.ceil(breakTime/60); 
+        if(breakTime<=0) continueGame(); draw(); requestAnimationFrame(update); return; 
     }
 
-    if (keys['KeyW']) player.y -= player.speed; if (keys['KeyS']) player.y += player.speed;
-    if (keys['KeyA']) player.x -= player.speed; if (keys['KeyD']) player.x += player.speed;
-
-    if (player.isReloading) {
-        player.reloadProgress += 2;
-        if (player.reloadProgress >= 100) { player.ammo = 7; player.isReloading = false; playSound(800, 'square', 0.1, 0.05); }
+    // Mega Boss Spawn logic
+    if (player.points - lastBossPoints >= 2000) {
+        lastBossPoints = player.points;
+        let a = Math.random()*Math.PI*2;
+        entities.push({type: 'megaboss', x: player.x+Math.cos(a)*800, y: player.y+Math.sin(a)*800, hp: 150});
     }
 
+    let nx = player.x, ny = player.y;
+    if (keys['KeyW']) ny -= player.speed; if (keys['KeyS']) ny += player.speed;
+    if (keys['KeyA']) nx -= player.speed; if (keys['KeyD']) nx += player.speed;
+
+    const checkCol = (x, y, isZ = false) => {
+        if (Math.abs(x) > WORLD_SIZE/2 || Math.abs(y) > WORLD_SIZE/2) return true;
+        if (isZ && shieldPower > 0 && Math.abs(x) < SHIELD_SIZE/2 && Math.abs(y) < SHIELD_SIZE/2) return true;
+        for (let g of gates) if (g.openTime <= 0 && x > g.x-g.w/2-20 && x < g.x+g.w/2+20 && y > g.y-g.h/2-20 && y < g.y+g.h/2+20) return true;
+        return false;
+    };
+
+    if (!checkCol(nx, player.y)) player.x = nx; if (!checkCol(player.x, ny)) player.y = ny;
+    if (player.isReloading) { player.reloadProgress += 2.5; if (player.reloadProgress >= 100) { player.ammo = WEAPONS[player.weapon].mag; player.isReloading = false; } }
+    if (shieldPower > 0) shieldPower--;
+
+    let promptText = "";
     entities.forEach(e => {
-        if (e.type === 'zombie') {
-            let dx = player.x-e.x, dy = player.y-e.y, d = Math.sqrt(dx*dx+dy*dy);
-            e.x += (dx/d)*(1.5+round*0.1); e.y += (dy/d)*(1.5+round*0.1);
-            if(d < 35 && Date.now()%1000 < 20) { player.hp--; playSound(100, 'sine', 0.2, 0.2); }
+        let d = Math.sqrt((player.x-e.x)**2+(player.y-e.y)**2);
+        if (['zombie', 'miniboss', 'megaboss'].includes(e.type)) {
+            let spd = e.type === 'miniboss' ? 2.5 : (e.type === 'megaboss' ? 1 : 1.8);
+            let dx = player.x-e.x, dy = player.y-e.y, dist = Math.sqrt(dx*dx+dy*dy);
+            let zx = e.x + (dx/dist)*spd, zy = e.y + (dy/dist)*spd;
+            if (!checkCol(zx, zy, true)) { e.x = zx; e.y = zy; }
+            if(dist < 45 && Date.now()%1000 < 25) player.hp--;
+        } else if (d < 70) {
+            if (e.type === 'fuel') { 
+                promptText = player.fuel < 2 ? "[E] PICKUP FUEL" : "FULL";
+                if(keys['KeyE'] && player.fuel < 2) { player.fuel++; if(isExfil) exfilFuel++; e.dead = true; keys['KeyE']=false; }
+            }
+            if (e.type === 'box') { 
+                promptText = "[E] REFUEL SHIELD";
+                if(keys['KeyE'] && player.fuel > 0) { player.fuel--; shieldPower = 1800; keys['KeyE']=false; }
+            }
+            if (e.type === 'weapon_pickup') { promptText = `[E] TAKE ${e.weapon}`; if(keys['KeyE']){ player.weapon = e.weapon; player.ammo = WEAPONS[e.weapon].mag; e.dead = true; keys['KeyE']=false; } }
+        }
+    });
+
+    gates.forEach(g => {
+        if (g.openTime > 0) g.openTime--;
+        if (Math.sqrt((player.x-g.x)**2+(player.y-g.y)**2) < 100 && g.openTime <= 0) {
+            promptText = `[E] OPEN GATE (1 FUEL)`;
+            if(keys['KeyE'] && player.fuel > 0) { player.fuel--; g.openTime = 1800; keys['KeyE']=false; }
         }
     });
 
     bullets.forEach(b => {
         b.x += b.vx; b.y += b.vy; b.life--;
         entities.forEach(e => {
-            if(e.type==='zombie' && Math.sqrt((b.x-e.x)**2+(b.y-e.y)**2)<30) {
+            if(['zombie', 'miniboss', 'megaboss'].includes(e.type) && Math.sqrt((b.x-e.x)**2+(b.y-e.y)**2)<50) {
                 e.hp -= 5; b.life = 0;
-                if(e.hp <= 0 && !e.dead) { e.dead = true; player.points += 100; }
+                if(e.hp <= 0 && !e.dead) {
+                    e.dead = true; player.points += (e.type==='megaboss'?1000: (e.type==='miniboss'?300:100));
+                    if(isExfil && Math.abs(e.x) < SHIELD_SIZE/2 && Math.abs(e.y) < SHIELD_SIZE/2) exfilKills++;
+                    if(Math.random() < (e.type==='megaboss'? 1 : (isExfil?0.4:0.15))) entities.push({type:'fuel', x:e.x, y:e.y});
+                }
             }
         });
     });
 
-    entities = entities.filter(e => !e.dead);
-    bullets = bullets.filter(b => b.life > 0);
-    if(entities.filter(e=>e.type==='zombie').length === 0) { round++; spawnWave(); }
-    draw();
-    requestAnimationFrame(update);
+    entities = entities.filter(e => !e.dead); bullets = bullets.filter(b => b.life > 0);
+    if(isExfil && exfilFuel >= 5 && exfilKills >= 25) { gameActive = false; document.getElementById('victoryMenu').style.display='flex'; }
+    if(!isExfil && entities.filter(e=>['zombie','miniboss','megaboss'].includes(e.type)).length === 0) {
+        if (round % 10 === 0) { breakTime = 900; document.getElementById('exfilMenu').style.display = 'flex'; }
+        else { round++; spawnWave(); }
+    }
+    
+    document.getElementById('fuel-count').innerText = player.fuel;
+    document.getElementById('points').innerText = player.points;
+    document.getElementById('ex-f').innerText = exfilFuel; document.getElementById('ex-k').innerText = exfilKills;
+    document.getElementById('prompt').innerText = promptText;
+    draw(); requestAnimationFrame(update);
 }
 
 function draw() {
     ctx.fillStyle = '#050505'; ctx.fillRect(0,0,canvas.width,canvas.height);
     let cx = player.x - canvas.width/2, cy = player.y - canvas.height/2;
+    ctx.strokeStyle = '#0f0'; ctx.lineWidth = 10; ctx.strokeRect(-WORLD_SIZE/2-cx, -WORLD_SIZE/2-cy, WORLD_SIZE, WORLD_SIZE);
+    if(shieldPower > 0) { ctx.strokeStyle = '#00f'; ctx.lineWidth = 5; ctx.strokeRect(-SHIELD_SIZE/2-cx, -SHIELD_SIZE/2-cy, SHIELD_SIZE, SHIELD_SIZE); }
+
+    gates.forEach(g => { ctx.fillStyle = g.openTime > 0 ? '#0f0' : '#f00'; ctx.fillRect(g.x-g.w/2-cx, g.y-g.h/2-cy, g.w, g.h); });
+
     entities.forEach(e => {
-        let img = assets[e.type];
-        if(img && img.complete) ctx.drawImage(img, e.x-cx-25, e.y-cy-25, 50, 50);
+        if(e.type === 'exfil_box') { ctx.fillStyle = '#ff8800'; ctx.fillRect(e.x-40-cx, e.y-40-cy, 80, 80); return; }
+        let img = assets[e.type==='weapon_pickup'?'ammo':e.type];
+        if(img && img.complete) {
+            ctx.save(); ctx.translate(e.x-cx, e.y-cy);
+            if(['zombie','miniboss','megaboss'].includes(e.type)) ctx.rotate(Math.atan2(player.y-e.y, player.x-e.x));
+            let s = e.type === 'megaboss' ? 140 : (e.type === 'miniboss' ? 90 : 70);
+            ctx.drawImage(img, -s/2, -s/2, s, s);
+            ctx.restore();
+        }
     });
-    bullets.forEach(b => { ctx.fillStyle = '#fff'; ctx.fillRect(b.x-cx, b.y-cy, 5, 5); });
-    ctx.save();
-    ctx.translate(canvas.width/2, canvas.height/2);
-    ctx.rotate(player.angle);
-    if(assets.player.complete) ctx.drawImage(assets.player, -30, -30, 60, 60);
+
+    bullets.forEach(b => { ctx.fillStyle = '#fff'; ctx.fillRect(b.x-cx, b.y-cy, 6, 6); });
+    ctx.save(); ctx.translate(canvas.width/2, canvas.height/2); ctx.rotate(player.angle);
+    if(assets.player.complete) ctx.drawImage(assets.player, -40, -40, 80, 80);
     ctx.restore();
-    if(player.isReloading) {
-        ctx.fillStyle = '#444'; ctx.fillRect(canvas.width/2-25, canvas.height/2-50, 50, 6);
-        ctx.fillStyle = '#0f0'; ctx.fillRect(canvas.width/2-25, canvas.height/2-50, (player.reloadProgress/100)*50, 6);
-    }
-    document.getElementById('points').innerText = player.points;
-    document.getElementById('hp').innerText = '❤'.repeat(player.hp);
+    document.getElementById('hp').innerText = '❤'.repeat(Math.max(0,player.hp));
     document.getElementById('round-ui').innerText = round;
+    document.getElementById('w-name').innerText = player.weapon;
     document.getElementById('ammo-cur').innerText = player.ammo;
 }
 </script>
