@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>SHADOW PROTOCOL: CUSTOM ASSETS</title>
+    <style>
+        body { margin: 0; background: #000; overflow: hidden; font-family: 'Courier New', Courier, monospace; color: #0f0; }
+        canvas { display: block; cursor: crosshair; }
+        #ui { position: absolute; top: 20px; left: 20px; pointer-events: none; text-shadow: 2px 2px #000; z-index: 10; }
+        #weapon-ui { position: absolute; bottom: 20px; right: 20px; text-align: right; pointer-events: none; }
+        #round-ui { position: absolute; bottom: 20px; left: 20px; color: red; font-size: 4em; font-weight: bold; }
+        #prompt { position: absolute; top: 60%; left: 50%; transform: translateX(-50%); color: yellow; font-size: 1.2em; text-align: center; }
+        #minigun-timer { color: #f0f; font-weight: bold; font-size: 1.5em; display: none; }
+        .stat { color: #fff; }
+    </style>
+</head>
+<body>
+
+    <div id="ui">
+        <div style="font-size: 1.5em; color: yellow;">SURVIVED: <span id="timer" class="stat">00:00</span></div>
+        <div id="minigun-timer">MINIGUN ACTIVE: <span id="mg-time">15</span>s</div>
+        <div>POINTS: <span id="points" style="color: gold;">500</span></div>
+        <div>HEALTH: <span id="hp" style="color: red;">❤❤❤</span></div>
+        <div>SPEED: <span id="speed-text" style="color: cyan;">LEVEL 2</span></div>
+        <div>FUEL: <span id="fuel-count" class="stat">0</span></div>
+    </div>
+
+    <div id="round-ui">1</div>
+    <div id="prompt"></div>
+
+    <div id="weapon-ui">
+        <div id="w-name" style="font-size: 1.5em;">M1911</div>
+        <div style="font-size: 3em;"><span id="ammo-cur">7</span>/<span id="ammo-max">7</span></div>
+        <div id="w-tier" style="color: cyan;">TIER 0</div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+// --- IMAGE LOADING ---
+const imgPlayer = new Image();
+imgPlayer.src = 'https://i.imgur.com/GisLhP6.png'; // Replace with player sprite URL
+
+const imgZombie = new Image();
+imgZombie.src = 'https://i.imgur.com/n6oVvCq.png'; // Replace with zombie sprite URL
+
+const imgFloor = new Image();
+imgFloor.src = 'https://i.imgur.com/pYvjLsh.png'; // Replace with floor tile URL
+
+// --- Weapon Database ---
+const WEAPONS = {
+    'M4':     { type: 'AR', mags: [30, 40, 60], dmg: 2, weight: 15 },
+    'SCAR':   { type: 'AR', mags: [25, 30, 35], dmg: 3.5, weight: 15 },
+    'TAR21':  { type: 'AR', mags: [30, 40, 50], dmg: 2.2, weight: 15 },
+    'QBZ121': { type: 'AR', mags: [30, 35, 45], dmg: 2.1, weight: 15 },
+    'RPK':    { type: 'LMG', mags: [50, 65, 75], dmg: 2.8, weight: 10 },
+    'M249':   { type: 'LMG', mags: [50, 65, 80], dmg: 2.5, weight: 10 },
+    'M1911':  { type: 'PST', mags: [7, 9, 12], dmg: 1.5, weight: 0 },
+    'GLOCK':  { type: 'PST', mags: [15, 20, 23], dmg: 1.2, weight: 15 },
+    '.357':   { type: 'PST', mags: [5, 6, 12], dmg: 6, weight: 10 },
+    '2011':   { type: 'SPC', mags: [23, 25, 50], dmg: 5, weight: 2 }
+};
+
+let player = {
+    x: 0, y: 0, hp: 3, points: 500, fuel: 0,
+    weapon: 'M1911', tier: 0, ammo: 7,
+    speedLvl: 2, speeds: [0, 2.2, 4.2, 7.2],
+    angle: 0, lastFire: 0,
+    minigunTime: 0,
+    isReloading: false, reloadProgress: 0
+};
+
+let bloodSplatters = [];
+let zones = [
+    { name: 'CENTER', x: 0, y: 0, w: 800, h: 800, locked: false },
+    { name: 'NORTH', x: 0, y: -1000, w: 600, h: 600, locked: true },
+    { name: 'SOUTH', x: 0, y: 1000, w: 600, h: 600, locked: true },
+    { name: 'EAST', x: 1000, y: 0, w: 600, h: 600, locked: true },
+    { name: 'WEST', x: -1000, y: 0, w: 600, h: 600, locked: true }
+];
+
+let entities = [
+    { type: 'box', x: 250, y: -250 },
+    { type: 'bench', x: -250, y: -250 }
+];
+
+let round = 1;
+let startTime = Date.now();
+let frameCount = 0;
+let keys = {};
+let bullets = [];
+
+window.onkeydown = (e) => {
+    keys[e.code] = true;
+    if(e.code === 'KeyR') startReload();
+};
+window.onkeyup = (e) => keys[e.code] = false;
+window.onmousemove = (e) => {
+    player.angle = Math.atan2(e.clientY - canvas.height/2, e.clientX - canvas.width/2);
+};
+window.onmousedown = (e) => { if(e.button === 0) fire(); };
+window.onwheel = (e) => {
+    if (e.deltaY < 0) player.speedLvl = Math.min(3, player.speedLvl + 1);
+    else player.speedLvl = Math.max(1, player.speedLvl - 1);
+    document.getElementById('speed-text').innerText = "LEVEL " + player.speedLvl;
+};
+
+function startReload() {
+    if (player.isReloading || player.minigunTime > 0) return;
+    let max = WEAPONS[player.weapon].mags[player.tier];
+    if (player.ammo === max) return;
+    player.isReloading = true;
+    player.reloadProgress = 0;
+}
+
+function fire() {
+    if (player.isReloading) return;
+    let now = Date.now();
+    let isMinigun = player.minigunTime > 0;
+    let rate = isMinigun ? 55 : (player.weapon.includes('RPK') || player.weapon.includes('M249') ? 110 : 200);
+    
+    if ((player.ammo > 0 || isMinigun) && now - player.lastFire > rate) {
+        if (!isMinigun) player.ammo--;
+        player.lastFire = now;
+        bullets.push({
+            x: player.x, y: player.y, 
+            vx: Math.cos(player.angle) * 22, 
+            vy: Math.sin(player.angle) * 22, 
+            dmg: isMinigun ? 4 : WEAPONS[player.weapon].dmg * (1 + player.tier), 
+            life: 60,
+            isMinigun: isMinigun
+        });
+        if (player.ammo <= 0 && !isMinigun) startReload();
+    }
+}
+
+function addBlood() {
+    for(let i=0; i<3; i++) {
+        bloodSplatters.push({
+            x: Math.random() * canvas.width,
+            y: Math.random() * canvas.height,
+            size: 40 + Math.random() * 100,
+            opacity: 0.6
+        });
+    }
+}
+
+function update() {
+    if (player.hp <= 0) return;
+
+    let s = player.speeds[player.speedLvl];
+    if (keys['KeyW']) player.y -= s;
+    if (keys['KeyS']) player.y += s;
+    if (keys['KeyA']) player.x -= s;
+    if (keys['KeyD']) player.x += s;
+
+    if (player.isReloading) {
+        player.reloadProgress += 1.8;
+        if (player.reloadProgress >= 100) {
+            player.ammo = WEAPONS[player.weapon].mags[player.tier];
+            player.isReloading = false;
+        }
+    }
+
+    if (player.minigunTime > 0) {
+        player.minigunTime--;
+        player.isReloading = false;
+        document.getElementById('minigun-timer').style.display = 'block';
+        document.getElementById('mg-time').innerText = Math.ceil(player.minigunTime / 60);
+    } else {
+        document.getElementById('minigun-timer').style.display = 'none';
+    }
+
+    let prompt = "";
+    entities.forEach((ent) => {
+        let dist = Math.sqrt((player.x-ent.x)**2 + (player.y-ent.y)**2);
+        
+        if (ent.type === 'zombie') {
+            let dx = player.x - ent.x, dy = player.y - ent.y;
+            let d = Math.sqrt(dx*dx+dy*dy);
+            let zSpeed = (1.4 + round * 0.12);
+            ent.x += (dx/d) * zSpeed; 
+            ent.y += (dy/d) * zSpeed;
+            if (d < 30 && frameCount % 60 === 0) {
+                player.hp--;
+                addBlood();
+                if(player.hp <= 0) alert("NEUTRALIZED at Round " + round);
+            }
+        }
+
+        if (dist < 65) {
+            if (ent.type === 'box') {
+                prompt = "MYSTERY BOX [E] (950 PTS)";
+                if (keys['KeyE'] && player.points >= 950) {
+                    player.points -= 950; rollBox(); keys['KeyE'] = false;
+                }
+            }
+            if (ent.type === 'bench') {
+                let cost = player.tier === 0 ? 2500 : 5000;
+                prompt = player.tier < 2 ? `UPGRADE [E] (${cost} PTS)` : "MAX TIER";
+                if (keys['KeyE'] && player.points >= cost && player.tier < 2) {
+                    player.points -= cost; player.tier++; 
+                    player.ammo = WEAPONS[player.weapon].mags[player.tier];
+                    keys['KeyE'] = false;
+                }
+            }
+            if (ent.type === 'minigun_drop') { player.minigunTime = 900; ent.dead = true; }
+            if (ent.type === 'fuel') { player.fuel++; ent.dead = true; }
+            if (ent.type === 'ammo') { player.ammo = WEAPONS[player.weapon].mags[player.tier]; ent.dead = true; }
+        }
+    });
+
+    zones.forEach(z => {
+        if (z.locked && Math.sqrt((player.x-z.x)**2 + (player.y-z.y)**2) < 200) {
+            prompt = `LOCKED AREA: NEED 1 FUEL [E]`;
+            if (keys['KeyE'] && player.fuel > 0) { player.fuel--; z.locked = false; keys['KeyE'] = false; }
+        }
+    });
+
+    bullets.forEach(b => {
+        b.x += b.vx; b.y += b.vy; b.life--;
+        entities.forEach(z => {
+            if (z.type === 'zombie' && Math.sqrt((b.x-z.x)**2 + (b.y-z.y)**2) < 25) {
+                z.hp -= b.dmg; b.life = 0;
+                if (z.hp <= 0 && !z.dead) {
+                    z.dead = true; player.points += 100;
+                    let roll = Math.random();
+                    if (roll < 0.06) entities.push({type: 'minigun_drop', x: z.x, y: z.y});
+                    else if (roll < 0.15) entities.push({type: 'fuel', x: z.x, y: z.y});
+                    else if (roll < 0.25) entities.push({type: 'ammo', x: z.x, y: z.y});
+                }
+            }
+        });
+    });
+
+    entities = entities.filter(e => !e.dead);
+    bullets = bullets.filter(b => b.life > 0);
+    bloodSplatters.forEach(s => s.opacity -= 0.001);
+    bloodSplatters = bloodSplatters.filter(s => s.opacity > 0);
+
+    if (entities.filter(e => e.type === 'zombie').length === 0) {
+        round++;
+        for(let i=0; i < 5 + round; i++) {
+            let ang = Math.random() * Math.PI * 2;
+            entities.push({type: 'zombie', x: player.x + Math.cos(ang)*900, y: player.y + Math.sin(ang)*900, hp: 10 + (round*6), maxHp: 10 + (round*6)});
+        }
+    }
+
+    document.getElementById('prompt').innerText = prompt;
+    draw();
+    frameCount++;
+    requestAnimationFrame(update);
+}
+
+function rollBox() {
+    const pool = Object.keys(WEAPONS);
+    let totalWeight = pool.reduce((a, b) => a + WEAPONS[b].weight, 0);
+    let r = Math.random() * totalWeight;
+    for (let w of pool) {
+        if (r < WEAPONS[w].weight) {
+            player.weapon = w; player.tier = 0;
+            player.ammo = WEAPONS[w].mags[0];
+            return;
+        }
+        r -= WEAPONS[w].weight;
+    }
+}
+
+function draw() {
+    // --- BACKGROUND ---
+    ctx.fillStyle = '#050505'; ctx.fillRect(0,0, canvas.width, canvas.height);
+    
+    let cx = player.x - canvas.width/2;
+    let cy = player.y - canvas.height/2;
+
+    // Draw floor texture (repeated)
+    if (imgFloor.complete) {
+        ctx.save();
+        ctx.translate(-cx % 256, -cy % 256);
+        for(let x = -256; x < canvas.width + 256; x += 256) {
+            for(let y = -256; y < canvas.height + 256; y += 256) {
+                ctx.drawImage(imgFloor, x, y, 256, 256);
+            }
+        }
+        ctx.restore();
+    }
+
+    zones.forEach(z => {
+        ctx.strokeStyle = z.locked ? '#500' : '#0a0';
+        ctx.lineWidth = 5;
+        ctx.strokeRect(z.x - z.w/2 - cx, z.y - z.h/2 - cy, z.w, z.h);
+    });
+
+    entities.forEach(e => {
+        if (e.type === 'zombie') {
+            if (imgZombie.complete) {
+                ctx.save();
+                ctx.translate(e.x - cx, e.y - cy);
+                // Zombie faces the player
+                let zAngle = Math.atan2(player.y - e.y, player.x - e.x);
+                ctx.rotate(zAngle);
+                ctx.drawImage(imgZombie, -20, -20, 40, 40);
+                ctx.restore();
+            } else {
+                ctx.fillStyle = 'red'; ctx.beginPath(); ctx.arc(e.x-cx, e.y-cy, 18, 0, Math.PI*2); ctx.fill();
+            }
+        }
+        if (e.type === 'box') { ctx.fillStyle = '#33f'; ctx.fillRect(e.x-30-cx, e.y-15-cy, 60, 30); }
+        if (e.type === 'bench') { ctx.fillStyle = '#0ff'; ctx.fillRect(e.x-20-cx, e.y-20-cy, 40, 40); }
+        if (e.type === 'minigun_drop') { ctx.fillStyle = '#f0f'; ctx.fillRect(e.x-15-cx, e.y-10-cy, 30, 20); }
+        if (e.type === 'fuel') { ctx.fillStyle = '#ee0'; ctx.fillRect(e.x-8-cx, e.y-10-cy, 16, 20); }
+        if (e.type === 'ammo') { ctx.fillStyle = '#0f0'; ctx.fillRect(e.x-10-cx, e.y-10-cy, 20, 15); }
+    });
+
+    bullets.forEach(b => { 
+        ctx.fillStyle = b.isMinigun ? '#f0f' : '#fff'; 
+        ctx.fillRect(b.x-cx, b.y-cy, 4, 4); 
+    });
+
+    // --- PLAYER DRAW ---
+    ctx.save();
+    ctx.translate(canvas.width/2, canvas.height/2);
+    ctx.rotate(player.angle);
+    if (imgPlayer.complete) {
+        ctx.drawImage(imgPlayer, -25, -25, 50, 50);
+    } else {
+        ctx.fillStyle = player.minigunTime > 0 ? '#f0f' : '#fff';
+        ctx.beginPath(); ctx.arc(0, 0, 15, 0, Math.PI*2); ctx.fill();
+        ctx.fillRect(0, -2, 30, 4); // Gun barrel
+    }
+    ctx.restore();
+
+    if (player.isReloading) {
+        ctx.fillStyle = '#333'; ctx.fillRect(canvas.width/2 - 20, canvas.height/2 - 40, 40, 5);
+        ctx.fillStyle = '#fff'; ctx.fillRect(canvas.width/2 - 20, canvas.height/2 - 40, (player.reloadProgress/100)*40, 5);
+    }
+
+    bloodSplatters.forEach(s => {
+        ctx.fillStyle = `rgba(150, 0, 0, ${s.opacity})`;
+        ctx.beginPath(); ctx.arc(s.x, s.y, s.size, 0, Math.PI*2); ctx.fill();
+    });
+
+    document.getElementById('points').innerText = player.points;
+    document.getElementById('hp').innerText = '❤'.repeat(player.hp);
+    document.getElementById('fuel-count').innerText = player.fuel;
+    document.getElementById('round-ui').innerText = round;
+    document.getElementById('w-name').innerText = player.minigunTime > 0 ? "MINIGUN" : player.weapon;
+    document.getElementById('ammo-cur').innerText = player.minigunTime > 0 ? "∞" : player.ammo;
+    document.getElementById('ammo-max').innerText = player.minigunTime > 0 ? "∞" : WEAPONS[player.weapon].mags[player.tier];
+    document.getElementById('w-tier').innerText = "TIER " + player.tier;
+    
+    let elapsed = Math.floor((Date.now() - startTime)/1000);
+    document.getElementById('timer').innerText = `${Math.floor(elapsed/60).toString().padStart(2,'0')}:${(elapsed%60).toString().padStart(2,'0')}`;
+}
+
+update();
+</script>
+</body>
+</html>
