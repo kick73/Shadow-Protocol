@@ -216,33 +216,54 @@ function update() {
 }
 
 function draw() {
-    ctx.fillStyle = '#050505'; ctx.fillRect(0,0,canvas.width,canvas.height);
-    let cx = player.x - canvas.width/2, cy = player.y - canvas.height/2;
-    ctx.strokeStyle = '#0f0'; ctx.lineWidth = 10; ctx.strokeRect(-WORLD_SIZE/2-cx, -WORLD_SIZE/2-cy, WORLD_SIZE, WORLD_SIZE);
-    if(shieldPower > 0) { ctx.strokeStyle = '#00f'; ctx.lineWidth = 5; ctx.strokeRect(-SHIELD_SIZE/2-cx, -SHIELD_SIZE/2-cy, SHIELD_SIZE, SHIELD_SIZE); }
+    ctx.fillStyle = '#050505'; 
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    let cx = player.x - canvas.width / 2;
+    let cy = player.y - canvas.height / 2;
 
-    gates.forEach(g => { ctx.fillStyle = g.openTime > 0 ? '#0f0' : '#f00'; ctx.fillRect(g.x-g.w/2-cx, g.y-g.h/2-cy, g.w, g.h); });
+    // ... (Keep your Boundary, Shield, and Gate drawing code here)
 
     entities.forEach(e => {
-        if(e.type === 'exfil_box') { ctx.fillStyle = '#ff8800'; ctx.fillRect(e.x-40-cx, e.y-40-cy, 80, 80); return; }
-        let img = assets[e.type==='weapon_pickup'?'ammo':e.type];
-        if(img && img.complete) {
-            ctx.save(); ctx.translate(e.x-cx, e.y-cy);
-            if(['zombie','miniboss','megaboss'].includes(e.type)) ctx.rotate(Math.atan2(player.y-e.y, player.x-e.x));
+        if (e.type === 'exfil_box') {
+            ctx.fillStyle = '#ff8800';
+            ctx.fillRect(e.x - 40 - cx, e.y - 40 - cy, 80, 80);
+            return;
+        }
+
+        let img = assets[e.type === 'weapon_pickup' ? 'ammo' : e.type];
+        if (img && img.complete) {
+            ctx.save();
+            // 1. Move to the entity's position on screen
+            ctx.translate(e.x - cx, e.y - cy);
+
+            // 2. Handle Rotation for Zombies and Bosses
+            if (['zombie', 'miniboss', 'megaboss'].includes(e.type)) {
+                // Calculate angle based on movement towards the player
+                let angle = Math.atan2(player.y - e.y, player.x - e.x);
+                // Adjust by 90 degrees (Math.PI/2) if your sprite faces "up" by default
+                ctx.rotate(angle + Math.PI / 2); 
+            }
+
+            // 3. Scale based on type
             let s = e.type === 'megaboss' ? 140 : (e.type === 'miniboss' ? 90 : 70);
-            ctx.drawImage(img, -s/2, -s/2, s, s);
+
+            // 4. Draw centered: -s/2 ensures the middle of the image is at the (x, y) coord
+            ctx.drawImage(img, -s / 2, -s / 2, s, s);
             ctx.restore();
         }
     });
 
-    bullets.forEach(b => { ctx.fillStyle = '#fff'; ctx.fillRect(b.x-cx, b.y-cy, 6, 6); });
-    ctx.save(); ctx.translate(canvas.width/2, canvas.height/2); ctx.rotate(player.angle);
-    if(assets.player.complete) ctx.drawImage(assets.player, -40, -40, 80, 80);
+    // 5. Fix Player Alignment
+    ctx.save();
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    // Add Math.PI/2 if your player sprite faces "up" but looks "sideways" when moving
+    ctx.rotate(player.angle + Math.PI / 2); 
+    if (assets.player.complete) {
+        ctx.drawImage(assets.player, -40, -40, 80, 80);
+    }
     ctx.restore();
-    document.getElementById('hp').innerText = '❤'.repeat(Math.max(0,player.hp));
-    document.getElementById('round-ui').innerText = round;
-    document.getElementById('w-name').innerText = player.weapon;
-    document.getElementById('ammo-cur').innerText = player.ammo;
+
+    // ... (Keep the rest of your UI drawing code)
 }
 </script>
 </body>
